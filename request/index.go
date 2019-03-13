@@ -65,7 +65,6 @@ func GetPic(_url string, q chan PicList, index int) {
 	q <- PicList{PageCount: pageCount, Prefix: prefix, Index: index, Path: path}
 }
 func Download(path string, url string, referer string, c chan bool) {
-	fmt.Println(url)
 	ok := true
 	defer func() {
 		if err := recover(); err != nil {
