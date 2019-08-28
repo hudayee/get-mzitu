@@ -2,14 +2,15 @@ package request
 
 import (
 	"fmt"
+	"github.com/PuerkitoBio/goquery"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/PuerkitoBio/goquery"
+	"time"
 )
 
 type List struct {
@@ -20,50 +21,82 @@ type PicList struct {
 	Path      string
 	Index     int
 	Prefix    string
-	PageCount uint64
+	PageCount int
 }
 
-func main() {
-}
-func GetList(number int64) (arr []List, pageCount int64, err error) { //(val string)
-	// newestList: "/page/${page}/",
-	// hotList: "/hot/page/${page}/"
-
-	doc, err := goquery.NewDocument("http://www.mzitu.com")
-	if err != nil {
-		panic(err.Error())
+func IsExist(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
 	}
-	pageDom := doc.Find(".nav-links .page-numbers")
-	listDom := doc.Find("#pins li span a")
-	listDom.Each(func(i int, s *goquery.Selection) {
-		url, bool := s.Attr("href")
-		title := s.Text()
-		if bool {
-			arr = append(arr, List{Url: url, Title: title})
-		}
-	})
-	val := pageDom.Last().Prev().Text()
-	pageCount, err = strconv.ParseInt(val, 10, 64)
-	return
+	return false
 }
-func GetPic(_url string, q chan PicList, index int) {
+func GetList(dir string, nums int) (arr []List, err error) {
+	page := 1
+	pageCount := 1
+	url := "http://www.mzitu.com"
+	for ; page <= pageCount; page++ {
+
+		if page > 1 {
+			url = fmt.Sprintf("http://www.mzitu.com/page/%d", page)
+		}
+		if page%4 == 0 { //每4组间隔一秒，防止403
+			time.Sleep(1 * time.Second)
+		}
+		var doc *goquery.Document
+		doc, err = goquery.NewDocument(url)
+		if err != nil {
+			return
+		}
+		pageDom := doc.Find(".nav-links .page-numbers")
+		listDom := doc.Find("#pins li span a")
+		listDom.Each(func(i int, s *goquery.Selection) {
+			url, bool := s.Attr("href")
+			title := s.Text()
+			filePath := filepath.Join(dir, title)
+			if IsExist(filePath) || !bool {
+				return
+			}
+			arr = append(arr, List{Url: url, Title: title})
+		})
+		val := pageDom.Last().Prev().Text()
+		if pageCount, err = strconv.Atoi(val); err != nil {
+			return
+		}
+		if len(arr) >= nums {
+			break
+		}
+	}
+	return arr[0:nums], nil
+}
+
+func GetPic(_url string, q chan *PicList, index int) {
 	doc, err := goquery.NewDocument(_url)
 	if err != nil {
-		panic(err.Error())
+		q <- nil
+		return
 	}
-	pageCount, err := strconv.ParseUint(doc.Find(".pagenavi a").Last().Prev().Text(), 10, 64)
+	pageInfo := doc.Find(".pagenavi a").Last().Prev().Text()
+	if pageInfo == "" {
+		q <- nil
+		return
+	}
+	pageCount, err := strconv.Atoi(pageInfo)
 	if err != nil {
-		panic(err.Error())
+		q <- nil
+		return
 	}
 	pic, isExist := doc.Find(".main-image p a img").Attr("src")
 	if !isExist {
-		panic("not found img src")
+		q <- nil
+		return
 	}
 	prefix := string([]byte(path.Base(pic))[:3])
 
-	path := strings.Replace(pic, path.Base(pic), "", 1)
-	q <- PicList{PageCount: pageCount, Prefix: prefix, Index: index, Path: path}
+	s := strings.Replace(pic, path.Base(pic), "", 1)
+	q <- &PicList{PageCount: pageCount, Prefix: prefix, Index: index, Path: s}
 }
+
 func Download(path string, url string, referer string, c chan bool) {
 	ok := true
 	defer func() {
@@ -74,6 +107,7 @@ func Download(path string, url string, referer string, c chan bool) {
 		}
 	}()
 	client := &http.Client{}
+	fmt.Println("Downloading：" + url)
 	req, _ := http.NewRequest("GET", url, strings.NewReader(""))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36")
 	req.Header.Set("Host", "www.mzitu.com")

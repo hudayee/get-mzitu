@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bufio"
-	"errors"
+	"flag"
 	"fmt"
 	"get-mzitu/request"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
+	"time"
 )
 
 type DownloadInfo struct {
@@ -18,120 +17,68 @@ type DownloadInfo struct {
 	referer string
 }
 
-var parametersInfo = [2]string{"保存图片的目录（默认当前目录）：", "下载图集的个数（限制255以下，默认10）："}
-
-func GetCurrentPath() (string, error) {
-	file, err := exec.LookPath(os.Args[0])
-	if err != nil {
-		return "", err
-	}
-	path, err := filepath.Abs(file)
-	if err != nil {
-		return "", err
-	}
-	i := strings.LastIndex(path, "/")
-	if i < 0 {
-		i = strings.LastIndex(path, "\\")
-	}
-	if i < 0 {
-		return "", errors.New(`error: Can't find "/" or "\".`)
-	}
-	return string(path[0 : i+1]), nil
-}
-func PathExists(path string) bool {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true
-	}
-	return false
-}
-
 func main() {
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 	}()
-	var directory string
-	var number uint64
-	for i, v := range parametersInfo {
-		fmt.Print(v)
-		read := bufio.NewReader(os.Stdin)
-		valByte, _, err := read.ReadLine()
-		if err != nil {
-			panic(err.Error())
-		}
-		value := string(valByte)
-		switch i {
-		case 0: //目录
-			if value == "" {
-				if defaultPath, err := GetCurrentPath(); err != nil {
-					panic(err.Error())
-				} else {
-					directory = defaultPath
-				}
-			} else if PathExists(string(valByte)) {
-				directory = value
-			} else {
-				panic("没有找到该目录")
-			}
-		case 1: //下载个数
-			if value == "" {
-				number = 10
-			} else {
-				num, err := strconv.ParseUint(string(valByte), 10, 64)
-				if err != nil {
-					panic(err.Error())
-				}
-				number = num
-			}
-		default:
-			panic("invalid parametersInfo[i]")
-		}
+	var (
+		err error
+		//successLog = log.New(os.Stdout, "message：", 0)
+		errLog = log.New(os.Stdout, "[ERROR]：", 0)
+	)
+	var _dir string
+	_dir, err = os.Getwd()
+	if err != nil {
+		errLog.Fatal("获取当前工作路径失败")
 	}
-	fmt.Println(directory)
-	fmt.Println(number)
+	nums := flag.Int("n", 10, "下载图集个数")
+	dir := flag.String("d", _dir, "保存图片的目录")
+	flag.Parse()
+
+	if !request.IsExist(*dir) {
+		errLog.Fatal(fmt.Sprintf("路径%s不存在", *dir))
+	}
+
 	var list []request.List
 
-	var pageCount int64 = 0
 	//获取列表信息
-	for i := int64(1); ; i++ {
-		arr, _pageCount, _ := request.GetList(i)
-		if i == 1 {
-			pageCount = _pageCount
-		}
-		for _, val := range arr {
-			filePath := filepath.Join(directory, val.Title)
-			if !PathExists(filePath) && uint64(len(list)) < number {
-				list = append(list, val)
-			}
-		}
-		if i == pageCount || uint64(len(list)) == number {
-			break
-		}
+	if list, err = request.GetList(*dir, *nums); err != nil {
+		errLog.Fatal(err)
 	}
+
 	// end
 	//获取图集信息
-	var picList []request.PicList = make([]request.PicList, len(list))
-	q1 := make(chan request.PicList)
+	var picList []*request.PicList = make([]*request.PicList, len(list))
+	fmt.Printf("共%d个图集\n正在获取图集信息......\n", len(list))
+	q1 := make(chan *request.PicList, 10)
 	for i, val := range list {
+		if i%4 == 0 { //每4组间隔一秒，防止403
+			time.Sleep(1 * time.Second)
+		}
 		go request.GetPic(val.Url, q1, i)
 	}
+	successPic := 0
+
 	for range list {
 		pic := <-q1
-		picList[pic.Index] = pic
+		if pic != nil {
+			successPic++
+			picList[pic.Index] = pic
+		}
 	}
-	fmt.Printf("共%d个图集\n", len(picList))
+	fmt.Printf("获取图集信息成功：%d\n", successPic)
 	//end
 	//下载图片
 	var downloadList []DownloadInfo
 	for i, val := range picList {
 		//创建目录
-		picPath := filepath.Join(directory, list[i].Title)
+		picPath := filepath.Join(*dir, list[i].Title)
 		if err := os.Mkdir(picPath, 0766); err != nil {
 			fmt.Printf("%s目录创建失败\n", list[i].Title)
 		}
-		for j := uint64(0); j < val.PageCount; j++ {
+		for j := 0; j < val.PageCount; j++ {
 			name := strconv.Itoa(int(j)+1) + ".jpg"
 			var downInfo DownloadInfo
 			if j < 9 {
@@ -146,7 +93,10 @@ func main() {
 	fmt.Println("共", len(downloadList), "张图片")
 	fmt.Println("Downloadling......")
 	var c chan bool = make(chan bool)
-	for _, val := range downloadList {
+	for i, val := range downloadList {
+		if i%4 == 0 {
+			time.Sleep(1 * time.Second)
+		}
 		go request.Download(val.path, val.url, val.referer, c)
 	}
 	var success, failed int
