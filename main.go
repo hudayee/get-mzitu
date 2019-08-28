@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"get-mzitu/request"
+	"github.com/hanbao-workspace/get-mzitu/request"
 	"log"
 	"os"
 	"path/filepath"
