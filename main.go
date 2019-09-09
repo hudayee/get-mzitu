@@ -54,7 +54,7 @@ func main() {
 	fmt.Printf("共%d个图集\n正在获取图集信息......\n", len(list))
 	q1 := make(chan *request.PicList, 10)
 	for i, val := range list {
-		if i%4 == 0 { //每4组间隔一秒，防止403
+		if i%3 == 0 { //每3组间隔一秒，防止403
 			time.Sleep(1 * time.Second)
 		}
 		go request.GetPic(val.Url, q1, i)
@@ -73,6 +73,9 @@ func main() {
 	//下载图片
 	var downloadList []DownloadInfo
 	for i, val := range picList {
+		if val == nil {
+			continue
+		}
 		//创建目录
 		picPath := filepath.Join(*dir, list[i].Title)
 		if err := os.Mkdir(picPath, 0766); err != nil {
